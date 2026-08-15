@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 from supabase import create_client, Client
+import uuid
 
 
 @st.cache_resource
