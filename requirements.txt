@@ -1,0 +1,7 @@
+streamlit==1.38.0
+pandas==2.1.4
+numpy==1.26.4
+gspread==6.1.2
+google-auth==2.32.0
+openpyxl==3.1.2
+xlsxwriter==3.2.0
