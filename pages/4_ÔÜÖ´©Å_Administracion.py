@@ -1,11 +1,9 @@
 """
 Página de Administración:
   - Cargar una nueva programación de OFs (Excel exportado de SAP B1)
-  - Eliminar toda la programación de una fecha específica (y sus registros
-    de entregas/recepciones asociados)
+  - Eliminar toda la programación de una fecha específica
   - Corregir/eliminar un registro puntual de entrega o recepción
   - Ver historial de eliminaciones
-Protegida con clave de administrador (st.secrets["admin_password"]).
 """
 import pandas as pd
 import streamlit as st
@@ -17,22 +15,25 @@ st.markdown("<style>h1,h2,h3{color:#8c1c1c;}</style>", unsafe_allow_html=True)
 
 st.title("⚙️ Administración")
 
-# 1. Manejo del estado de autenticación
+# 1. Manejo del estado de autenticación con st.form
 if "admin_ok" not in st.session_state:
     st.session_state.admin_ok = False
 
 if not st.session_state.admin_ok:
     st.info("Esta sección requiere clave de administrador.")
-    clave = st.text_input("Clave de administrador", type="password")
-    if st.button("Ingresar"):
-        # Revisa si la clave coincide con la de los Secrets
-        if clave == st.secrets.get("admin_password") or clave == st.secrets.get("ADMIN_PASSWORD"):
-            st.session_state.admin_ok = True
-            st.rerun()
-        else:
-            st.error("Clave incorrecta.")
+    with st.form("form_login"):
+        clave = st.text_input("Clave de administrador", type="password")
+        submit_login = st.form_submit_button("Ingresar")
+        
+        if submit_login:
+            clave_secret = st.secrets.get("admin_password") or st.secrets.get("ADMIN_PASSWORD")
+            if clave == clave_secret:
+                st.session_state.admin_ok = True
+                st.rerun()
+            else:
+                st.error("Clave incorrecta.")
 else:
-    # 2. Todo el contenido protegido se ejecuta si la contraseña es correcta
+    # 2. Todo el contenido protegido
     conexion.inicializar_hojas()
 
     tab_cargar, tab_eliminar, tab_corregir, tab_historial = st.tabs(
@@ -54,10 +55,7 @@ else:
     # ============================================================== CARGAR
     with tab_cargar:
         st.subheader("Cargar Excel de OFs programadas (exportado de SAP B1)")
-        st.caption(
-            "El archivo debe tener las columnas: "
-            + ", ".join(COLUMNAS_SAP.keys())
-        )
+        st.caption("El archivo debe tener las columnas: " + ", ".join(COLUMNAS_SAP.keys()))
         archivo = st.file_uploader("Selecciona el archivo Excel", type=["xlsx", "xls"])
 
         if archivo is not None:
@@ -122,12 +120,10 @@ else:
                                 }
                             )
                         conexion.agregar_filas("programacion", filas)
-                        st.success(f"Se cargaron {len(filas)} OFs nuevas correctamente.")
-                        st.rerun()
+                        st.success(f"¡Éxito! Se cargaron {len(filas)} OFs nuevas correctamente en Supabase.")
                     except Exception as e:
                         st.error(f"Error detectado durante la carga: {e}")
                         st.exception(e)
-                        st.stop()
             else:
                 st.info("Todas las OFs de este archivo ya estaban cargadas. No hay nada nuevo por agregar.")
 
@@ -184,7 +180,6 @@ else:
                     },
                 )
                 st.success(f"Se eliminó la programación del {fecha_sel.strftime('%d/%m/%Y')} correctamente.")
-                st.rerun()
 
     # ============================================================== CORREGIR
     with tab_corregir:
@@ -221,7 +216,6 @@ else:
                     ok = conexion.eliminar_registro_por_id(nombre_hoja, mapa[elegido])
                     if ok:
                         st.success("Registro eliminado.")
-                        st.rerun()
                     else:
                         st.error("No se pudo eliminar el registro (puede que ya no exista).")
 
