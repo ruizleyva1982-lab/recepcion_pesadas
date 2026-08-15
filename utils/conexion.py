@@ -103,3 +103,17 @@ def agregar_filas(tabla, filas):
     except Exception as e:
         st.error(f"Error al insertar datos en la tabla '{tabla}': {e}")
         return None
+
+def agregar_fila(tabla, fila):
+    """
+    Inserta un único registro (diccionario) en la tabla especificada de Supabase.
+    """
+    try:
+        supabase = get_supabase_client()
+        # Si recibe un solo diccionario, lo envuelve en una lista para Supabase
+        datos = [fila] if isinstance(fila, dict) else fila
+        response = supabase.table(tabla).insert(datos).execute()
+        return response
+    except Exception as e:
+        st.error(f"Error al insertar registro en la tabla '{tabla}': {e}")
+        return None
