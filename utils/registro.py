@@ -1,212 +1,158 @@
-"""
-Página de registro compartida entre Dosimetría (entregas) y Producción
-(recepciones). Ambas páginas llaman a `pagina_registro(...)` con su propio
-rol para no duplicar la lógica.
-"""
-from __future__ import annotations
 
+"""
+Módulo genérico para las páginas de registro (Dosimetría y Producción).
+"""
 import pandas as pd
 import streamlit as st
 
-from utils import conexion, logica
+from utils import conexion
 
 
-def pagina_registro(
-    rol: str,
-    hoja: str,
-    columna_propia: str,
-    columna_contraria: str,
-    color_primario: str,
-    icono: str,
-):
-    """
-    rol: "Dosimetría" o "Producción" (para textos)
-    hoja: nombre de la hoja de Sheets donde se registra ("entregas_dosimetria" / "recepciones_produccion")
-    columna_propia: "entregado" o "recibido" (la que este rol construye)
-    columna_contraria: la columna del otro rol, para mostrar contexto de conciliación
-    """
-    st.set_page_config(page_title=f"{rol} · Recepción OFs", page_icon=icono, layout="wide")
+def pagina_registro(rol: str, icono: str):
+    st.title(f"{icono} {rol}")
 
-    st.markdown(
-        f"""
-        <style>
-            h1, h2, h3 {{ color: {color_primario}; }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    # Determine la tabla según el rol
+    es_dosimetria = rol == "Dosimetría"
+    nombre_tabla = "entregas_dosimetria" if es_dosimetria else "recepciones_produccion"
 
-    conexion.inicializar_hojas()
+    # 1. Controles principales (Fecha y Usuario)
+    col_f, col_u = st.columns([1, 2])
+    with col_f:
+        fecha_sel = st.date_input("Fecha de programación", value=conexion.ahora_lima().date())
+    with col_u:
+        usuario = st.text_input("Tu nombre (quien registra)", key=f"usr_{rol}")
 
-    col_t, col_r = st.columns([6, 1])
-    with col_t:
-        st.title(f"{icono} {rol}")
-        verbo = "entregar" if columna_propia == "entregado" else "recibir"
-        st.caption(f"Registra por parciales lo que vas a {verbo} y compáralo con lo programado.")
-    with col_r:
-        st.write("")
-        if st.button("🔄 Actualizar", use_container_width=True, key=f"refrescar_{hoja}"):
-            conexion.refrescar()
-            st.rerun()
+    if not usuario.strip():
+        st.warning("⚠️ Por favor, ingresa tu nombre arriba para poder registrar.")
+        st.stop()
 
+    # 2. Cargar datos actualizados
     df_prog = conexion.cargar("programacion")
+    df_logs = conexion.cargar(nombre_tabla)
+
     if df_prog.empty:
-        st.info(
-            "Todavía no hay ninguna programación cargada. Ve a "
-            "**⚙️ Administración** para cargar el Excel de OFs."
-        )
+        st.info("No hay programación cargada en el sistema.")
         st.stop()
 
-    df_ent = conexion.cargar("entregas_dosimetria")
-    df_rec = conexion.cargar("recepciones_produccion")
-    df_propia = df_ent if hoja == "entregas_dosimetria" else df_rec
+    # Filtrar programación por fecha
+    df_prog["fecha_vencimiento"] = pd.to_datetime(df_prog["fecha_vencimiento"], errors="coerce").dt.date
+    prog_fecha = df_prog[df_prog["fecha_vencimiento"] == fecha_sel].copy()
 
-    # ------------------------------------------------------------ filtros
-    fechas_disp = sorted(df_prog["fecha_vencimiento"].dropna().unique())
-    hoy = conexion.ahora_lima().date()
-    default_fecha = hoy if hoy in fechas_disp else fechas_disp[0]
+    if prog_fecha.empty:
+        st.info(f"No hay OFs programadas para el {fecha_sel.strftime('%d/%m/%Y')}.")
+        st.stop()
 
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        fecha_sel = st.selectbox(
-            "Fecha de vencimiento",
-            options=fechas_disp,
-            index=fechas_disp.index(default_fecha),
-            format_func=lambda d: d.strftime("%d/%m/%Y"),
-        )
-    with c2:
-        lineas_disp = sorted(df_prog.loc[df_prog["fecha_vencimiento"] == fecha_sel, "linea_prod"].unique())
-        lineas_sel = st.multiselect("Línea de producción", options=lineas_disp, default=lineas_disp)
-
-    if "usuario_" + hoja not in st.session_state:
-        st.session_state["usuario_" + hoja] = ""
-    st.session_state["usuario_" + hoja] = st.text_input(
-        "Tu nombre (para el registro)", value=st.session_state["usuario_" + hoja], key=f"nombre_{hoja}"
+    # Consolidar planificado por producto/línea
+    resumen = (
+        prog_fecha.groupby(["cod_item", "item", "linea_prod"])["cantidad_planificada"]
+        .sum()
+        .reset_index()
     )
-    usuario = st.session_state["usuario_" + hoja].strip()
 
-    if not lineas_sel:
-        st.warning("Selecciona al menos una línea.")
+    # Consolidar ya entregado/recibido acumulado
+    if not df_logs.empty:
+        df_logs["fecha_vencimiento"] = pd.to_datetime(df_logs["fecha_vencimiento"], errors="coerce").dt.date
+        logs_fecha = df_logs[df_logs["fecha_vencimiento"] == fecha_sel]
+        
+        if not logs_fecha.empty:
+            registrados = (
+                logs_fecha.groupby(["cod_item", "linea_prod"])["cantidad_ofs"]
+                .sum()
+                .reset_index()
+                .rename(columns={"cantidad_ofs": "ya_registrado"})
+            )
+            resumen = resumen.merge(registrados, on=["cod_item", "linea_prod"], how="left")
+            resumen["ya_registrado"] = resumen["ya_registrado"].fillna(0)
+        else:
+            resumen["ya_registrado"] = 0
+    else:
+        resumen["ya_registrado"] = 0
+
+    resumen["pendiente"] = resumen["cantidad_planificada"] - resumen["ya_registrado"]
+
+    # 3. Formulario de registro
+    st.subheader("Registrar entrega parcial")
+
+    opciones = []
+    mapa_items = {}
+    for _, r in resumen.iterrows():
+        # Etiqueta legible para el desplegable
+        label = f"{r['item']} ({r['cod_item']}) · {r['linea_prod']} — pendiente {int(r['pendiente'])}"
+        opciones.append(label)
+        mapa_items[label] = r
+
+    if not opciones:
+        st.success("🎉 Todo lo programado para esta fecha ya fue registrado al 100%.")
         st.stop()
 
-    f_prog = df_prog[(df_prog["fecha_vencimiento"] == fecha_sel) & (df_prog["linea_prod"].isin(lineas_sel))]
-    f_ent = df_ent[(df_ent["fecha_vencimiento"] == fecha_sel) & (df_ent["linea_prod"].isin(lineas_sel))] if not df_ent.empty else df_ent
-    f_rec = df_rec[(df_rec["fecha_vencimiento"] == fecha_sel) & (df_rec["linea_prod"].isin(lineas_sel))] if not df_rec.empty else df_rec
+    item_elegido = st.selectbox("Producto", options=opciones)
+    info_item = mapa_items[item_elegido]
 
-    detalle = logica.resumen_detallado(f_prog, f_ent, f_rec)
+    c1, c2 = st.columns(2)
+    c1.metric("Programado", int(info_item["cantidad_planificada"]))
+    c2.metric("Pendiente", int(info_item["pendiente"]))
 
-    if detalle.empty:
-        st.info("No hay productos programados para esta fecha y línea(s).")
-        st.stop()
+    max_val = max(1, int(info_item["pendiente"]))
 
-    pendiente_col = "pendiente_entregar" if columna_propia == "entregado" else "pendiente_recibir"
-    estado_col = "estado_entrega" if columna_propia == "entregado" else "estado_recepcion"
-
-    # ------------------------------------------------------------ KPIs
-    total_prog = int(detalle["programado"].sum())
-    total_propia = int(detalle[columna_propia].sum())
-    pct = round(total_propia / total_prog * 100, 1) if total_prog else 0
-    completos = int((detalle[estado_col] == "✅ Completo").sum())
-
-    k1, k2, k3 = st.columns(3)
-    k1.metric("OFs programadas", total_prog)
-    k2.metric(f"OFs {('entregadas' if columna_propia=='entregado' else 'recibidas')}", total_propia, f"{pct}%")
-    k3.metric("Productos completos", f"{completos}/{len(detalle)}")
-
-    st.divider()
-
-    # ------------------------------------------------------------ tabla resumen
-    st.subheader("Productos programados")
-    tabla = detalle.sort_values(pendiente_col, ascending=False).rename(
-        columns={
-            "linea_prod": "Línea",
-            "cod_item": "Código",
-            "item": "Producto",
-            "programado": "Programado",
-            columna_propia: "Registrado por ti",
-            columna_contraria: f"Registrado por {'Producción' if columna_propia == 'entregado' else 'Dosimetría'}",
-            pendiente_col: "Pendiente",
-            estado_col: "Estado",
-        }
-    )[["Línea", "Código", "Producto", "Programado", "Registrado por ti",
-       f"Registrado por {'Producción' if columna_propia == 'entregado' else 'Dosimetría'}",
-       "Pendiente", "Estado"]]
-    st.dataframe(tabla, use_container_width=True, hide_index=True)
-
-    st.divider()
-
-    # ------------------------------------------------------------ formulario de registro
-    st.subheader(f"Registrar {'entrega' if columna_propia == 'entregado' else 'recepción'} parcial")
-
-    opciones = detalle.apply(
-        lambda r: f"{r['item']} ({r['cod_item']}) · {r['linea_prod']} — pendiente {r[pendiente_col]:.0f}",
-        axis=1,
-    ).tolist()
-    indice_map = {opciones[i]: i for i in range(len(opciones))}
-
-    seleccion = st.selectbox("Producto", options=opciones)
-    fila = detalle.iloc[indice_map[seleccion]]
-
-    colf1, colf2, colf3 = st.columns([1, 1, 2])
-    with colf1:
-        st.metric("Programado", f"{fila['programado']:.0f}")
-    with colf2:
-        st.metric("Pendiente", f"{fila[pendiente_col]:.0f}")
-
-    with st.form(key=f"form_{hoja}", clear_on_submit=True):
-        cantidad = st.number_input(
+    # Formulario estricto de envio
+    with st.form("form_entrega", clear_on_submit=True):
+        cant_ingresada = st.number_input(
             "Cantidad de OFs a registrar ahora",
-            min_value=0,
+            min_value=1,
+            max_value=max_val if max_val > 0 else 1,
+            value=min(1, max_val),
             step=1,
-            value=0,
         )
         comentario = st.text_input("Comentario (opcional)")
-        enviar = st.form_submit_button("✅ Registrar", use_container_width=True)
+        submit = st.form_submit_button("✅ Registrar", type="primary")
 
-        if enviar:
-            if cantidad <= 0:
-                st.error("Ingresa una cantidad mayor a 0.")
-            elif not usuario:
-                st.error("Escribe tu nombre antes de registrar.")
+        if submit:
+            if info_item["pendiente"] <= 0:
+                st.error("Este producto ya no tiene cantidad pendiente por registrar.")
             else:
-                if cantidad > fila[pendiente_col]:
-                    st.warning(
-                        f"Estás registrando {cantidad:.0f} OFs, más de lo pendiente "
-                        f"({fila[pendiente_col]:.0f}). Se guardará igual, revisa que sea correcto."
-                    )
-                conexion.agregar_fila(
-                    hoja,
-                    {
-                        "id": conexion.nuevo_id(),
-                        "timestamp": conexion.ahora_lima().isoformat(timespec="seconds"),
-                        "fecha_vencimiento": fecha_sel.isoformat(),
-                        "cod_item": fila["cod_item"],
-                        "item": fila["item"],
-                        "linea_prod": fila["linea_prod"],
-                        "cantidad_ofs": cantidad,
-                        "usuario": usuario,
-                        "comentario": comentario,
-                    },
-                )
-                st.success(f"Registrado: {cantidad:.0f} OFs de '{fila['item']}'.")
-                st.rerun()
-
-    # ------------------------------------------------------------ historial
-    with st.expander("📜 Ver historial de registros de esta fecha"):
-        hist = df_propia[
-            (df_propia["fecha_vencimiento"] == fecha_sel) & (df_propia["linea_prod"].isin(lineas_sel))
-        ] if not df_propia.empty else df_propia
-        if hist.empty:
-            st.caption("Todavía no hay registros para esta fecha.")
-        else:
-            hist_mostrar = hist.sort_values("timestamp", ascending=False).rename(
-                columns={
-                    "timestamp": "Fecha/hora",
-                    "item": "Producto",
-                    "linea_prod": "Línea",
-                    "cantidad_ofs": "OFs",
-                    "usuario": "Usuario",
-                    "comentario": "Comentario",
+                nuevo_registro = {
+                    "id": conexion.nuevo_id(),
+                    "timestamp": conexion.ahora_lima().isoformat(timespec="seconds"),
+                    "fecha_vencimiento": fecha_sel.isoformat(),
+                    "cod_item": str(info_item["cod_item"]),
+                    "item": str(info_item["item"]),
+                    "linea_prod": str(info_item["linea_prod"]),
+                    "cantidad_ofs": int(cant_ingresada),
+                    "usuario": usuario.strip(),
+                    "comentario": comentario.strip(),
                 }
-            )[["Fecha/hora", "Producto", "Línea", "OFs", "Usuario", "Comentario"]]
-            st.dataframe(hist_mostrar, use_container_width=True, hide_index=True)
+
+                res = conexion.agregar_fila(nombre_tabla, nuevo_registro)
+                if res is not None:
+                    # Limpiar la caché de Streamlit para que actualice las métricas
+                    st.cache_data.clear()
+                    st.success(
+                        f"¡Registrado con éxito! Se guardaron {cant_ingresada} OF(s) para {info_item['item']}."
+                    )
+                    st.info("💡 Haz clic en 'Ver historial de registros' abajo para verificar el envío.")
+                else:
+                    st.error("Ocurrió un problema al intentar guardar el registro en Supabase.")
+
+    # 4. Historial desplegable
+    with st.expander("📜 Ver historial de registros de esta fecha"):
+        if not df_logs.empty:
+            logs_ver = df_logs[df_logs["fecha_vencimiento"] == fecha_sel].sort_values("timestamp", ascending=False)
+            if not logs_ver.empty:
+                st.dataframe(
+                    logs_ver[["timestamp", "item", "linea_prod", "cantidad_ofs", "usuario", "comentario"]].rename(
+                        columns={
+                            "timestamp": "Hora",
+                            "item": "Producto",
+                            "linea_prod": "Línea",
+                            "cantidad_ofs": "Cantidad",
+                            "usuario": "Usuario",
+                            "comentario": "Comentario",
+                        }
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.caption("No hay entregas registradas para esta fecha aún.")
+        else:
+            st.caption("No hay entregas registradas para esta fecha aún.")
