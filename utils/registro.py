@@ -1,4 +1,3 @@
-
 """
 Módulo genérico para las páginas de registro (Dosimetría y Producción).
 """
@@ -8,12 +7,14 @@ import streamlit as st
 from utils import conexion
 
 
-def pagina_registro(rol: str, icono: str):
+def pagina_registro(rol: str = "Dosimetría", icono: str = "📦", **kwargs):
     st.title(f"{icono} {rol}")
 
-    # Determine la tabla según el rol
-    es_dosimetria = rol == "Dosimetría"
-    nombre_tabla = "entregas_dosimetria" if es_dosimetria else "recepciones_produccion"
+    # Determinar la tabla según el rol o si viene especificada en kwargs
+    nombre_tabla = kwargs.get(
+        "tabla",
+        "entregas_dosimetria" if rol == "Dosimetría" else "recepciones_produccion"
+    )
 
     # 1. Controles principales (Fecha y Usuario)
     col_f, col_u = st.columns([1, 2])
@@ -26,7 +27,7 @@ def pagina_registro(rol: str, icono: str):
         st.warning("⚠️ Por favor, ingresa tu nombre arriba para poder registrar.")
         st.stop()
 
-    # 2. Cargar datos actualizados
+    # 2. Cargar datos
     df_prog = conexion.cargar("programacion")
     df_logs = conexion.cargar(nombre_tabla)
 
@@ -42,18 +43,18 @@ def pagina_registro(rol: str, icono: str):
         st.info(f"No hay OFs programadas para el {fecha_sel.strftime('%d/%m/%Y')}.")
         st.stop()
 
-    # Consolidar planificado por producto/línea
+    # Consolidar planificado
     resumen = (
         prog_fecha.groupby(["cod_item", "item", "linea_prod"])["cantidad_planificada"]
         .sum()
         .reset_index()
     )
 
-    # Consolidar ya entregado/recibido acumulado
+    # Consolidar lo ya registrado
     if not df_logs.empty:
         df_logs["fecha_vencimiento"] = pd.to_datetime(df_logs["fecha_vencimiento"], errors="coerce").dt.date
         logs_fecha = df_logs[df_logs["fecha_vencimiento"] == fecha_sel]
-        
+
         if not logs_fecha.empty:
             registrados = (
                 logs_fecha.groupby(["cod_item", "linea_prod"])["cantidad_ofs"]
@@ -76,7 +77,6 @@ def pagina_registro(rol: str, icono: str):
     opciones = []
     mapa_items = {}
     for _, r in resumen.iterrows():
-        # Etiqueta legible para el desplegable
         label = f"{r['item']} ({r['cod_item']}) · {r['linea_prod']} — pendiente {int(r['pendiente'])}"
         opciones.append(label)
         mapa_items[label] = r
@@ -94,7 +94,6 @@ def pagina_registro(rol: str, icono: str):
 
     max_val = max(1, int(info_item["pendiente"]))
 
-    # Formulario estricto de envio
     with st.form("form_entrega", clear_on_submit=True):
         cant_ingresada = st.number_input(
             "Cantidad de OFs a registrar ahora",
@@ -124,16 +123,15 @@ def pagina_registro(rol: str, icono: str):
 
                 res = conexion.agregar_fila(nombre_tabla, nuevo_registro)
                 if res is not None:
-                    # Limpiar la caché de Streamlit para que actualice las métricas
                     st.cache_data.clear()
                     st.success(
                         f"¡Registrado con éxito! Se guardaron {cant_ingresada} OF(s) para {info_item['item']}."
                     )
-                    st.info("💡 Haz clic en 'Ver historial de registros' abajo para verificar el envío.")
+                    st.info("💡 Despliega 'Ver historial de registros' abajo para verificar.")
                 else:
-                    st.error("Ocurrió un problema al intentar guardar el registro en Supabase.")
+                    st.error("Ocurrió un problema al guardar el registro en Supabase.")
 
-    # 4. Historial desplegable
+    # 4. Historial
     with st.expander("📜 Ver historial de registros de esta fecha"):
         if not df_logs.empty:
             logs_ver = df_logs[df_logs["fecha_vencimiento"] == fecha_sel].sort_values("timestamp", ascending=False)
