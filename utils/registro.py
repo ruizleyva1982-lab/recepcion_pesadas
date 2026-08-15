@@ -43,7 +43,7 @@ def pagina_registro(rol: str = "Dosimetría", icono: str = "📦", **kwargs):
         st.info(f"No hay OFs programadas para el {fecha_sel.strftime('%d/%m/%Y')}.")
         st.stop()
 
-    # Consolidar planificado (conteo de OFs)
+    # Consolidar planificado (Cuenta número de OFs / filas)
     resumen = (
         prog_fecha.groupby(["cod_item", "item", "linea_prod"])
         .size()
@@ -89,8 +89,8 @@ def pagina_registro(rol: str = "Dosimetría", icono: str = "📦", **kwargs):
     info_item = mapa_items[item_elegido]
 
     c1, c2 = st.columns(2)
-    c1.metric("Programado", int(info_item["cantidad_planificada"]))
-    c2.metric("Pendiente", int(info_item["pendiente"]))
+    c1.metric("Programado (OFs)", int(info_item["cantidad_planificada"]))
+    c2.metric("Pendiente (OFs)", int(info_item["pendiente"]))
 
     max_val = max(1, int(info_item["pendiente"]))
 
@@ -110,7 +110,6 @@ def pagina_registro(rol: str = "Dosimetría", icono: str = "📦", **kwargs):
                 st.error("Este producto ya no tiene cantidad pendiente por registrar.")
             else:
                 nuevo_registro = {
-                    "id": conexion.nuevo_id(),
                     "timestamp": conexion.ahora_lima().isoformat(timespec="seconds"),
                     "fecha_vencimiento": fecha_sel.isoformat(),
                     "cod_item": str(info_item["cod_item"]),
@@ -142,7 +141,7 @@ def pagina_registro(rol: str = "Dosimetría", icono: str = "📦", **kwargs):
                             "timestamp": "Hora",
                             "item": "Producto",
                             "linea_prod": "Línea",
-                            "cantidad_ofs": "Cantidad",
+                            "cantidad_ofs": "Cantidad OFs",
                             "usuario": "Usuario",
                             "comentario": "Comentario",
                         }
