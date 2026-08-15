@@ -23,13 +23,14 @@ if "admin_ok" not in st.session_state:
 if not st.session_state.admin_ok:
     st.info("Esta sección requiere clave de administrador.")
     clave = st.text_input("Clave de administrador", type="password")
-    if st.button("Ingresar"):
-        if clave and clave == st.secrets.get("admin_password", ""):
-            st.session_state.admin_ok = True
-            st.rerun()
-        else:
-            st.error("Clave incorrecta.")
-    st.stop()
+    if st.button("Confirmar carga"):
+    try:
+        conexion.agregar_filas("programacion", filas)
+        st.success("¡Carga exitosa!")
+    except Exception as e:
+        st.error(f"Error detectado: {e}")
+        st.exception(e)  # Muestra el detalle del error en pantalla
+        st.stop()        # Detiene la recarga automática de Streamlit
 
 conexion.inicializar_hojas()
 
