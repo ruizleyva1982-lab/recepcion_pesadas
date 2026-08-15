@@ -118,3 +118,10 @@ def agregar_fila(tabla, fila):
     except Exception as e:
         st.error(f"Error al insertar registro en la tabla '{tabla}': {e}")
         return None
+
+def nuevo_id():
+    """
+    Genera un identificador único (UUID4) como texto.
+    """
+    return str(uuid.uuid4())
+        
