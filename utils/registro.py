@@ -43,11 +43,11 @@ def pagina_registro(rol: str = "Dosimetría", icono: str = "📦", **kwargs):
         st.info(f"No hay OFs programadas para el {fecha_sel.strftime('%d/%m/%Y')}.")
         st.stop()
 
-    # Consolidar planificado
+    # Consolidar planificado (conteo de OFs)
     resumen = (
-        prog_fecha.groupby(["cod_item", "item", "linea_prod"])["cantidad_planificada"]
-        .sum()
-        .reset_index()
+        prog_fecha.groupby(["cod_item", "item", "linea_prod"])
+        .size()
+        .reset_index(name="cantidad_planificada")
     )
 
     # Consolidar lo ya registrado
