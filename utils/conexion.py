@@ -84,3 +84,22 @@ def eliminar_por_fecha(fecha_str: str):
 def refrescar():
     """Limpia la caché de Streamlit."""
     st.cache_data.clear()
+
+def agregar_filas(tabla, filas):
+    """
+    Inserta una lista de registros o un DataFrame en la tabla especificada de Supabase.
+    """
+    try:
+        supabase = get_supabase_client()
+        
+        # Si le pasas un DataFrame de pandas, lo convierte a lista de diccionarios
+        if hasattr(filas, 'to_dict'):
+            datos = filas.to_dict(orient='records')
+        else:
+            datos = filas
+
+        response = supabase.table(tabla).insert(datos).execute()
+        return response
+    except Exception as e:
+        st.error(f"Error al insertar datos en la tabla '{tabla}': {e}")
+        return None
